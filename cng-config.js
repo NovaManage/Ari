@@ -12,7 +12,7 @@ module.exports = [
   {
     name: "office",
     username: "office@novamanage.com",
-    password: "Regency1!"
+    password: "Regency!1"
   },
   {
     name: "sbmshultas",
