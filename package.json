@@ -1,0 +1,8 @@
+{
+  "name": "cng-bot",
+  "version": "1.0.0",
+  "dependencies": {
+    "playwright": "^1.41.0",
+    "node-fetch": "^3.3.2"
+  }
+}
