@@ -128,6 +128,10 @@ All data is written to the configured Google Sheet with separate tabs for accoun
 - Check if the website has added new security measures
 - Review screenshots saved in `/tmp/` directory on failures
 
+**For detailed troubleshooting steps, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)**
+
+**Quick debug**: Run `node eversource-debug.js` to see exactly what's happening during login.
+
 ### MFA Issues
 The Eversource bot handles "Ask Me Again Later" prompts automatically. If you encounter issues:
 - Check the console output for MFA-related messages
