@@ -1,3 +1,4 @@
+require("dotenv").config();
 const { chromium } = require("playwright");
 const { google } = require("googleapis");
 const fs = require("fs");
@@ -5,6 +6,9 @@ const path = require("path");
 const { EVERSOURCE_LOGINS, GOOGLE_CONFIG } = require("./eversource-config");
 
 const PDF_FOLDER = "./eversource_pdfs";
+
+// Constants
+const MAX_ADDRESS_LENGTH = 100; // Google Sheets cell character limit for readability
 
 // ================= GOOGLE SHEETS/DRIVE SETUP =================
 
@@ -230,7 +234,7 @@ async function scrapeAccountInfo(page, accountName) {
     try {
       const addressElement = await page.locator('[class*="address"], [class*="service-address"]').first();
       const addressText = await addressElement.textContent({ timeout: 5000 });
-      accountData.serviceAddress = addressText.trim().substring(0, 100); // Limit length
+      accountData.serviceAddress = addressText.trim().substring(0, MAX_ADDRESS_LENGTH);
     } catch (e) {
       console.log("Could not extract service address");
     }
@@ -634,6 +638,7 @@ async function processAccount(browser, account, sheets, drive) {
   const accountRows = [];
   const billRows = [];
   const paymentRows = [];
+  const pdfRows = [];  // Separate sheet for PDF information
   
   try {
     // Step 1: Login
@@ -665,19 +670,20 @@ async function processAccount(browser, account, sheets, drive) {
     // Step 4: Download bill PDFs
     const downloadedPdfs = await downloadBillPdfs(page, account.name);
     
-    // Upload PDFs to Drive
+    // Upload PDFs to Drive and track in separate sheet
     for (const pdf of downloadedPdfs) {
       try {
         console.log(`📤 Uploading ${pdf.fileName} to Drive...`);
         const driveId = await uploadPdfToDrive(drive, pdf.filePath, pdf.fileName);
         const driveUrl = driveId ? `https://drive.google.com/file/d/${driveId}/view` : "";
         
-        // Add PDF info to bill rows
-        billRows.push([
+        // Add PDF info to separate PDF tracking sheet
+        pdfRows.push([
           account.name,
           pdf.docKey,
           pdf.fileName,
-          driveUrl
+          driveUrl,
+          new Date().toISOString()
         ]);
         
         console.log(`✅ Uploaded to Drive: ${pdf.fileName}`);
@@ -701,11 +707,11 @@ async function processAccount(browser, account, sheets, drive) {
     console.log(`\n✅ Completed processing ${account.name}`);
     
     // Return data for this account
-    return { accountRows, billRows, paymentRows };
+    return { accountRows, billRows, paymentRows, pdfRows };
     
   } catch (error) {
     console.error(`❌ Error processing ${account.name}:`, error.message);
-    return { accountRows: [], billRows: [], paymentRows: [] };
+    return { accountRows: [], billRows: [], paymentRows: [], pdfRows: [] };
   } finally {
     await context.close();
   }
@@ -736,6 +742,7 @@ async function processAccount(browser, account, sheets, drive) {
   const allAccountRows = [];
   const allBillRows = [];
   const allPaymentRows = [];
+  const allPdfRows = [];
   
   for (const account of EVERSOURCE_LOGINS) {
     try {
@@ -744,6 +751,7 @@ async function processAccount(browser, account, sheets, drive) {
       allAccountRows.push(...result.accountRows);
       allBillRows.push(...result.billRows);
       allPaymentRows.push(...result.paymentRows);
+      allPdfRows.push(...result.pdfRows);
       
     } catch (error) {
       console.error(`❌ Fatal error for ${account.name}:`, error.message);
@@ -758,6 +766,7 @@ async function processAccount(browser, account, sheets, drive) {
   await writeToSheet(sheets, "Eversource_Accounts", allAccountRows);
   await writeToSheet(sheets, "Eversource_Bills", allBillRows);
   await writeToSheet(sheets, "Eversource_Payments", allPaymentRows);
+  await writeToSheet(sheets, "Eversource_PDFs", allPdfRows);
   
   await browser.close();
   

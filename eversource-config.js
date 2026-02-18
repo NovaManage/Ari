@@ -17,10 +17,21 @@ for (let i = 1; i <= 9; i++) {
 
 // Google Sheets and Drive Configuration
 const GOOGLE_CONFIG = {
-  sheetId: process.env.GOOGLE_SHEET_ID || "1dfd9PaO3tHxY0S8ZfLvKjgmh7G-fv7_3ckmgGeJJIcY",
-  driveFolder: process.env.GOOGLE_DRIVE_FOLDER_ID || "0AImp-xo89wsoUk9PVA",
+  sheetId: process.env.GOOGLE_SHEET_ID,
+  driveFolder: process.env.GOOGLE_DRIVE_FOLDER_ID,
   keyFile: "credentials.google-key.json"
 };
+
+// Validate required configuration
+if (!GOOGLE_CONFIG.sheetId) {
+  console.error("❌ GOOGLE_SHEET_ID environment variable is required");
+  process.exit(1);
+}
+
+if (!GOOGLE_CONFIG.driveFolder) {
+  console.error("❌ GOOGLE_DRIVE_FOLDER_ID environment variable is required");
+  process.exit(1);
+}
 
 module.exports = {
   EVERSOURCE_LOGINS,

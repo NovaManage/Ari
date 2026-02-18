@@ -100,6 +100,7 @@ The bot will create/update the following sheets:
 - `Eversource_Accounts` - Account information
 - `Eversource_Bills` - Bill history
 - `Eversource_Payments` - Payment history
+- `Eversource_PDFs` - PDF download tracking with Drive links
 
 ## Output
 
