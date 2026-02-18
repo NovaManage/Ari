@@ -166,7 +166,7 @@ async function scrapeAccountInfo(page, accountName) {
       timeout: 60000
     });
     
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
     
     // Try to extract account information from the page
     const accountData = {
@@ -178,22 +178,71 @@ async function scrapeAccountInfo(page, accountName) {
       lastBillAmount: ""
     };
     
-    // Try to extract account number
+    // Try multiple strategies to extract account number
     try {
-      const accNumElement = await page.locator('text=/Account.*\\d{10,}/i').first();
-      const accText = await accNumElement.textContent({ timeout: 5000 });
-      const match = accText.match(/\d{10,}/);
+      // Strategy 1: Look for text with "Account" followed by numbers
+      let accNumElement = await page.locator('text=/Account[:\s#]*\d{10,}/i').first();
+      let accText = await accNumElement.textContent({ timeout: 5000 });
+      let match = accText.match(/\d{10,}/);
       if (match) accountData.accountNumber = match[0];
     } catch (e) {
-      console.log("Could not extract account number");
+      try {
+        // Strategy 2: Look for element with account number class
+        let accNumElement = await page.locator('[class*="account-number"], [class*="accountNumber"]').first();
+        let accText = await accNumElement.textContent({ timeout: 5000 });
+        let match = accText.match(/\d{10,}/);
+        if (match) accountData.accountNumber = match[0];
+      } catch (e2) {
+        console.log("Could not extract account number");
+      }
     }
     
     // Try to extract balance
     try {
-      const balanceElement = await page.locator('text=/\\$[\\d,]+\\.\\d{2}/').first();
-      accountData.balance = await balanceElement.textContent({ timeout: 5000 });
+      // Look for balance amount - typically prominently displayed
+      const balanceElement = await page.locator('[class*="balance"], [class*="amount-due"]:has-text("$")').first();
+      const balanceText = await balanceElement.textContent({ timeout: 5000 });
+      const balanceMatch = balanceText.match(/\$[\d,]+\.\d{2}/);
+      if (balanceMatch) accountData.balance = balanceMatch[0];
     } catch (e) {
-      console.log("Could not extract balance");
+      try {
+        // Alternative: Look for any prominent dollar amount
+        const balanceElement = await page.locator('text=/Balance.*\$[\d,]+\.\d{2}/i, text=/Amount Due.*\$[\d,]+\.\d{2}/i').first();
+        const balanceText = await balanceElement.textContent({ timeout: 5000 });
+        const balanceMatch = balanceText.match(/\$[\d,]+\.\d{2}/);
+        if (balanceMatch) accountData.balance = balanceMatch[0];
+      } catch (e2) {
+        console.log("Could not extract balance");
+      }
+    }
+    
+    // Try to extract due date
+    try {
+      const dueDateElement = await page.locator('text=/Due.*\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/i').first();
+      const dueDateText = await dueDateElement.textContent({ timeout: 5000 });
+      const dateMatch = dueDateText.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/);
+      if (dateMatch) accountData.dueDate = dateMatch[0];
+    } catch (e) {
+      console.log("Could not extract due date");
+    }
+    
+    // Try to extract service address
+    try {
+      const addressElement = await page.locator('[class*="address"], [class*="service-address"]').first();
+      const addressText = await addressElement.textContent({ timeout: 5000 });
+      accountData.serviceAddress = addressText.trim().substring(0, 100); // Limit length
+    } catch (e) {
+      console.log("Could not extract service address");
+    }
+    
+    // Try to extract last bill amount
+    try {
+      const billElement = await page.locator('text=/Last Bill.*\$[\d,]+\.\d{2}/i, text=/Previous Bill.*\$[\d,]+\.\d{2}/i').first();
+      const billText = await billElement.textContent({ timeout: 5000 });
+      const amountMatch = billText.match(/\$[\d,]+\.\d{2}/);
+      if (amountMatch) accountData.lastBillAmount = amountMatch[0];
+    } catch (e) {
+      console.log("Could not extract last bill amount");
     }
     
     console.log("✅ Account info extracted:", accountData);
@@ -201,6 +250,8 @@ async function scrapeAccountInfo(page, accountName) {
     
   } catch (error) {
     console.error("❌ Error scraping account info:", error.message);
+    await page.screenshot({ path: '/tmp/eversource_account_error.png' }).catch(() => {});
+    
     return {
       accountName: accountName,
       accountNumber: "N/A",
@@ -225,26 +276,41 @@ async function scrapeBills(page, accountName) {
       { waitUntil: "domcontentloaded", timeout: 60000 }
     );
     
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
     
-    // Wait for billing history section
+    // Wait for the page to fully load
     try {
-      await page.waitForSelector('text=/Billing History/i', { timeout: 15000 });
+      await page.waitForSelector('div:has-text("Billing History"), h2:has-text("Billing History"), h3:has-text("Billing History")', { timeout: 20000 });
+      console.log("✅ Found Billing History section");
     } catch (e) {
-      console.log("Could not find Billing History section");
-      return bills;
+      console.log("⚠️ Could not find Billing History section, trying alternative approach");
     }
     
-    // Look for bill rows/entries
-    // Eversource typically shows bills in a table or list format
-    const billElements = await page.locator('.bill-row, tr:has-text("$"), div:has-text("Bill Date")').all();
+    // Try multiple selector strategies for bill rows
+    let billElements = [];
+    
+    // Strategy 1: Look for rows in a table
+    billElements = await page.locator('table tr:has-text("$")').all();
+    
+    if (billElements.length === 0) {
+      // Strategy 2: Look for div containers with bill data
+      billElements = await page.locator('div[class*="bill"], div[class*="row"]:has-text("$")').all();
+    }
+    
+    if (billElements.length === 0) {
+      // Strategy 3: Look for any container with date and amount patterns
+      billElements = await page.locator('[class*="history"] > *, [class*="billing"] > *').all();
+    }
     
     console.log(`Found ${billElements.length} potential bill elements`);
     
-    for (let i = 0; i < Math.min(billElements.length, 12); i++) {
+    for (let i = 0; i < Math.min(billElements.length, 24); i++) {
       try {
         const element = billElements[i];
         const text = await element.textContent();
+        
+        // Skip if no meaningful content
+        if (!text || text.trim().length < 5) continue;
         
         // Extract bill information from text
         const billData = {
@@ -252,18 +318,30 @@ async function scrapeBills(page, accountName) {
           billDate: "",
           amount: "",
           dueDate: "",
-          status: "N/A"
+          status: "Posted"
         };
         
         // Try to find dollar amounts
-        const amountMatch = text.match(/\$[\d,]+\.\d{2}/);
-        if (amountMatch) billData.amount = amountMatch[0];
+        const amounts = text.match(/\$[\d,]+\.\d{2}/g);
+        if (amounts && amounts.length > 0) {
+          billData.amount = amounts[0];
+        } else {
+          continue; // Skip if no amount found
+        }
         
-        // Try to find dates (MM/DD/YYYY or similar formats)
-        const dateMatch = text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
-        if (dateMatch) billData.billDate = dateMatch[0];
+        // Try to find dates (various formats)
+        const dateMatches = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g);
+        if (dateMatches && dateMatches.length > 0) {
+          billData.billDate = dateMatches[0];
+          if (dateMatches.length > 1) {
+            billData.dueDate = dateMatches[1];
+          }
+        }
         
-        bills.push(billData);
+        // Only add if we have at least an amount
+        if (billData.amount) {
+          bills.push(billData);
+        }
       } catch (e) {
         console.log(`Error processing bill ${i}:`, e.message);
       }
@@ -291,32 +369,64 @@ async function downloadBillPdfs(page, accountName) {
       { waitUntil: "domcontentloaded", timeout: 60000 }
     );
     
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
     
     // Create PDF folder if it doesn't exist
     if (!fs.existsSync(PDF_FOLDER)) {
       fs.mkdirSync(PDF_FOLDER, { recursive: true });
     }
     
-    // Look for "View Bill" buttons or PDF download links
-    const viewButtons = await page.locator('button:has-text("View Bill"), button:has-text("View"), a:has-text("View Bill")').all();
+    // Try multiple strategies to find download buttons
+    let viewButtons = [];
+    
+    // Strategy 1: Look for buttons with "View Bill" text
+    viewButtons = await page.locator('button:has-text("View Bill"), a:has-text("View Bill")').all();
+    
+    if (viewButtons.length === 0) {
+      // Strategy 2: Look for buttons with "View" text  
+      viewButtons = await page.locator('button:has-text("View"), a:has-text("View")').all();
+    }
+    
+    if (viewButtons.length === 0) {
+      // Strategy 3: Look for buttons with data-url attribute
+      viewButtons = await page.locator('button[data-url*="DocID"], a[href*="DocID"]').all();
+    }
+    
+    if (viewButtons.length === 0) {
+      // Strategy 4: Look for PDF links
+      viewButtons = await page.locator('a[href*=".pdf"], button[onclick*="pdf"]').all();
+    }
     
     console.log(`Found ${viewButtons.length} view/download buttons`);
     
-    for (let i = 0; i < Math.min(viewButtons.length, 12); i++) {
+    if (viewButtons.length === 0) {
+      console.log("⚠️ No bill download buttons found");
+      return downloadedFiles;
+    }
+    
+    // Process each button
+    for (let i = 0; i < Math.min(viewButtons.length, 24); i++) {
       try {
         const button = viewButtons[i];
         
-        // Check for data-url attribute
-        const dataUrl = await button.getAttribute('data-url');
-        let docKey = `bill_${i + 1}`;
+        // Try to extract a document identifier
+        let docKey = `bill_${Date.now()}_${i + 1}`;
         
+        // Check for data-url attribute
+        const dataUrl = await button.getAttribute('data-url').catch(() => null);
         if (dataUrl) {
           const match = dataUrl.match(/DocID=([^&]+)/i);
           if (match) docKey = match[1];
         }
         
-        const fileName = `Eversource_${accountName}_${docKey}.pdf`;
+        // Check for href attribute
+        const href = await button.getAttribute('href').catch(() => null);
+        if (href && href.includes('DocID')) {
+          const match = href.match(/DocID=([^&]+)/i);
+          if (match) docKey = match[1];
+        }
+        
+        const fileName = `Eversource_${accountName.replace(/[^a-zA-Z0-9]/g, '_')}_${docKey}.pdf`;
         const filePath = path.join(PDF_FOLDER, fileName);
         
         // Skip if already downloaded
@@ -328,34 +438,69 @@ async function downloadBillPdfs(page, accountName) {
         
         console.log(`⬇ Downloading bill ${i + 1}/${viewButtons.length}...`);
         
-        // Set up download listener
-        const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
-        
-        // Click the button
-        await button.click();
-        
-        // Wait for download
-        const download = await downloadPromise;
-        
-        // Save the file
-        await download.saveAs(filePath);
-        
-        console.log(`✅ Downloaded: ${fileName}`);
-        
-        downloadedFiles.push({ fileName, filePath, docKey });
-        
-        // Small delay between downloads
-        await page.waitForTimeout(1000);
+        try {
+          // Set up download listener with timeout
+          const downloadPromise = page.waitForEvent('download', { timeout: 45000 });
+          
+          // Click the button - try multiple strategies
+          try {
+            await button.click({ timeout: 5000 });
+          } catch (clickError) {
+            // If normal click fails, try force click
+            await button.click({ force: true, timeout: 5000 });
+          }
+          
+          // Wait for download
+          const download = await downloadPromise;
+          
+          // Save the file
+          await download.saveAs(filePath);
+          
+          // Verify file was saved
+          if (fs.existsSync(filePath)) {
+            const stats = fs.statSync(filePath);
+            if (stats.size > 0) {
+              console.log(`✅ Downloaded: ${fileName} (${stats.size} bytes)`);
+              downloadedFiles.push({ fileName, filePath, docKey });
+            } else {
+              console.log(`⚠️ Downloaded file is empty: ${fileName}`);
+              fs.unlinkSync(filePath);
+            }
+          } else {
+            console.log(`⚠️ File not found after download: ${fileName}`);
+          }
+          
+          // Delay between downloads to avoid rate limiting
+          await page.waitForTimeout(2000 + Math.random() * 1000);
+          
+        } catch (downloadError) {
+          console.log(`❌ Download failed for bill ${i + 1}:`, downloadError.message);
+          
+          // Try to go back to the bills page if we navigated away
+          if (!page.url().includes('past-bills-payments')) {
+            await page.goto(
+              "https://www.eversource.com/residential/account-billing/past-bills-payments",
+              { waitUntil: "domcontentloaded", timeout: 30000 }
+            );
+            await page.waitForTimeout(3000);
+            
+            // Re-fetch buttons after navigation
+            if (viewButtons.length > i + 1) {
+              viewButtons = await page.locator('button:has-text("View Bill"), a:has-text("View Bill"), button:has-text("View")').all();
+            }
+          }
+        }
         
       } catch (e) {
-        console.log(`Error downloading bill ${i + 1}:`, e.message);
+        console.log(`❌ Error processing bill ${i + 1}:`, e.message);
       }
     }
     
-    console.log(`✅ Downloaded ${downloadedFiles.length} PDFs`);
+    console.log(`✅ Successfully downloaded ${downloadedFiles.length} PDFs`);
     
   } catch (error) {
-    console.error("❌ Error downloading PDFs:", error.message);
+    console.error("❌ Error in PDF download process:", error.message);
+    await page.screenshot({ path: '/tmp/eversource_pdf_error.png' }).catch(() => {});
   }
   
   return downloadedFiles;
@@ -369,48 +514,95 @@ async function scrapePayments(page, accountName) {
   const payments = [];
   
   try {
-    await page.goto(
-      "https://www.eversource.com/residential/account-billing/past-bills-payments",
-      { waitUntil: "domcontentloaded", timeout: 60000 }
-    );
-    
-    await page.waitForTimeout(3000);
+    // Check if we're already on the past bills page
+    if (!page.url().includes('past-bills-payments')) {
+      await page.goto(
+        "https://www.eversource.com/residential/account-billing/past-bills-payments",
+        { waitUntil: "domcontentloaded", timeout: 60000 }
+      );
+      await page.waitForTimeout(5000);
+    }
     
     // Look for payment history section
     try {
-      await page.waitForSelector('text=/Payment History/i', { timeout: 10000 });
+      await page.waitForSelector('text=/Payment History/i, h2:has-text("Payment"), h3:has-text("Payment")', { timeout: 15000 });
+      console.log("✅ Found Payment History section");
     } catch (e) {
-      console.log("Could not find Payment History section");
-      return payments;
+      console.log("⚠️ Could not find Payment History section, trying alternative approach");
     }
     
-    // Look for payment rows
-    const paymentElements = await page.locator('.payment-row, tr:has-text("Payment"), div:has-text("Payment")').all();
+    // Try multiple strategies to find payment elements
+    let paymentElements = [];
+    
+    // Strategy 1: Look for table rows with payment data
+    paymentElements = await page.locator('table tr:has-text("Payment"), table tr:has-text("Paid")').all();
+    
+    if (paymentElements.length === 0) {
+      // Strategy 2: Look for div containers with payment class
+      paymentElements = await page.locator('div[class*="payment"], div[class*="transaction"]').all();
+    }
+    
+    if (paymentElements.length === 0) {
+      // Strategy 3: Look for any element containing payment-related text and amount
+      paymentElements = await page.locator('[class*="history"] div:has-text("$")').all();
+    }
     
     console.log(`Found ${paymentElements.length} potential payment elements`);
     
-    for (let i = 0; i < Math.min(paymentElements.length, 24); i++) {
+    for (let i = 0; i < Math.min(paymentElements.length, 36); i++) {
       try {
         const element = paymentElements[i];
         const text = await element.textContent();
+        
+        // Skip if no meaningful content
+        if (!text || text.trim().length < 5) continue;
+        
+        // Look for payment indicators
+        if (!text.toLowerCase().includes('payment') && 
+            !text.toLowerCase().includes('paid') && 
+            !text.match(/\$[\d,]+\.\d{2}/)) {
+          continue;
+        }
         
         const paymentData = {
           accountName: accountName,
           paymentDate: "",
           amount: "",
           status: "Completed",
-          confirmationCode: "N/A"
+          confirmationCode: ""
         };
         
         // Extract amount
-        const amountMatch = text.match(/\$[\d,]+\.\d{2}/);
-        if (amountMatch) paymentData.amount = amountMatch[0];
+        const amounts = text.match(/\$[\d,]+\.\d{2}/g);
+        if (amounts && amounts.length > 0) {
+          paymentData.amount = amounts[0];
+        } else {
+          continue; // Skip if no amount found
+        }
         
         // Extract date
-        const dateMatch = text.match(/\d{1,2}\/\d{1,2}\/\d{2,4}/);
-        if (dateMatch) paymentData.paymentDate = dateMatch[0];
+        const dateMatches = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g);
+        if (dateMatches && dateMatches.length > 0) {
+          paymentData.paymentDate = dateMatches[0];
+        }
         
-        payments.push(paymentData);
+        // Try to extract confirmation/reference number
+        const confMatch = text.match(/(?:Confirmation|Reference|Ref)[:\s#]*([A-Z0-9]{6,})/i);
+        if (confMatch) {
+          paymentData.confirmationCode = confMatch[1];
+        }
+        
+        // Determine status from text
+        if (text.toLowerCase().includes('pending')) {
+          paymentData.status = "Pending";
+        } else if (text.toLowerCase().includes('failed')) {
+          paymentData.status = "Failed";
+        }
+        
+        // Only add if we have an amount
+        if (paymentData.amount) {
+          payments.push(paymentData);
+        }
       } catch (e) {
         console.log(`Error processing payment ${i}:`, e.message);
       }
