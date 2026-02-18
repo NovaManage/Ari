@@ -1,0 +1,30 @@
+# Environment variables
+.env
+
+# Google credentials
+credentials.google-key.json
+
+# Downloaded PDFs
+cng_pdfs/
+eversource_pdfs/
+
+# Node modules
+node_modules/
+
+# Token files
+token-*.txt
+accounts-*.json
+
+# Debug screenshots
+*.png
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
