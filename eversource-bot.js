@@ -128,17 +128,51 @@ async function loginEversource(page, username, password) {
   const signInBtn = page.locator('input[type="submit"], button:has-text("Sign In")').first();
 
   console.log("🖱 Clicking Sign In...");
+  
+  const urlBeforeClick = page.url();
+  console.log("URL before sign in:", urlBeforeClick);
+  
   await signInBtn.click();
 
-  // Wait for navigation after login
+  // Wait for login to complete - multiple strategies
+  console.log("⏳ Waiting for login to complete...");
+  
   try {
-    await page.waitForURL('**/eversource.com/**', { timeout: 30000 });
+    // Strategy 1: Wait for URL to change away from login page
+    await page.waitForFunction(
+      (loginUrl) => window.location.href !== loginUrl,
+      urlBeforeClick,
+      { timeout: 30000 }
+    );
     console.log("✅ Login successful, navigated to:", page.url());
   } catch (error) {
-    console.error("❌ Login navigation timeout");
-    await page.screenshot({ path: '/tmp/eversource_login_fail.png' });
-    throw new Error("Login failed or navigation timeout.");
+    // Strategy 2: Check if we're still on login page with an error
+    const currentUrl = page.url();
+    console.log("Current URL after timeout:", currentUrl);
+    
+    // Check for error messages
+    const errorElement = await page.locator('.error, .alert-danger, [role="alert"]:has-text("error"), [role="alert"]:has-text("incorrect")').first().textContent({ timeout: 2000 }).catch(() => null);
+    
+    if (errorElement) {
+      console.error("❌ Login error detected:", errorElement);
+      await page.screenshot({ path: './eversource_login_error.png' });
+      throw new Error(`Login failed: ${errorElement}`);
+    }
+    
+    // If no error but still on login page, credentials might be wrong
+    if (currentUrl.includes('/login')) {
+      console.error("❌ Still on login page after timeout");
+      await page.screenshot({ path: './eversource_login_timeout.png' });
+      throw new Error("Login failed: Page did not navigate away from login");
+    }
+    
+    // If URL changed but waitForFunction failed, continue anyway
+    console.log("⚠️ Navigation detection uncertain, continuing...");
   }
+  
+  // Wait a bit more for page to stabilize
+  await page.waitForTimeout(3000);
+  console.log("Current URL after login:", page.url());
 
   // Handle MFA screen if it appears
   try {
