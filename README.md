@@ -70,6 +70,12 @@ node cng-accounts.js
 node eversource-bot.js
 ```
 
+**Debug mode** (if experiencing issues):
+```bash
+node eversource-debug.js
+```
+The debug script runs with a visible browser, takes screenshots at each step, and provides detailed logging.
+
 ## Configuration
 
 ### CNG Configuration

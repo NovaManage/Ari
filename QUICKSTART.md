@@ -73,6 +73,23 @@ GOOGLE_DRIVE_FOLDER_ID=your_folder_id_from_step4
 node eversource-bot.js
 ```
 
+### Debug Mode
+
+If you're experiencing login issues, use the debug script to see exactly what's happening:
+
+```bash
+node eversource-debug.js
+```
+
+This will:
+- Run with visible browser (non-headless)
+- Take screenshots at each step
+- Show detailed console output
+- Check for error messages
+- Keep browser open for 10 seconds at the end for manual inspection
+
+Screenshots will be saved as `debug_01_login_page.png`, `debug_04_credentials_filled.png`, etc.
+
 ## What the Bot Does
 
 1. **Logs in** to each configured Eversource account
